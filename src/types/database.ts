@@ -22,4 +22,5 @@ export interface Video {
   video_url: string | null;
   thumbnail_url: string | null;
   higgsfield_job_id: string | null;
+  error_message: string | null;
 }
