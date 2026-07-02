@@ -1,9 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { triggerVideoGeneration } from "@/lib/generate-video";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { Profile } from "@/types/database";
 
 export async function generateVideo(formData: FormData) {
@@ -13,6 +12,27 @@ export async function generateVideo(formData: FormData) {
   if (!user) redirect("/login");
 
   const productUrl = formData.get("product_url") as string;
+  const imageFile = formData.get("product_image") as File | null;
+
+  // Upload image si fournie
+  let productImageUrl: string | null = null;
+  if (imageFile && imageFile.size > 0) {
+    const admin = createAdminClient();
+    const ext = imageFile.name.split(".").pop() ?? "jpg";
+    const filePath = `${user.id}/${crypto.randomUUID()}.${ext}`;
+    const bytes = await imageFile.arrayBuffer();
+
+    const { error: uploadError } = await admin.storage
+      .from("product-images")
+      .upload(filePath, bytes, { contentType: imageFile.type, upsert: false });
+
+    if (!uploadError) {
+      const { data: { publicUrl } } = admin.storage
+        .from("product-images")
+        .getPublicUrl(filePath);
+      productImageUrl = publicUrl;
+    }
+  }
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -26,7 +46,7 @@ export async function generateVideo(formData: FormData) {
 
   const { data: video, error } = await supabase
     .from("videos")
-    .insert({ user_id: user.id, product_url: productUrl, status: "pending" })
+    .insert({ user_id: user.id, product_url: productUrl, product_image_url: productImageUrl, status: "pending" })
     .select()
     .single();
 
@@ -36,15 +56,6 @@ export async function generateVideo(formData: FormData) {
     .from("profiles")
     .update({ credits: profile.credits - 1 })
     .eq("id", user.id);
-
-  // Déclenche la génération Higgsfield après la réponse (non bloquant)
-  after(async () => {
-    try {
-      await triggerVideoGeneration(video.id);
-    } catch (err) {
-      console.error(`[generate] video ${video.id} failed:`, err);
-    }
-  });
 
   redirect(`/app?generating=${video.id}`);
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { syncVideoStatus } from "@/lib/generate-video";
+import { triggerVideoGeneration, syncVideoStatus } from "@/lib/generate-video";
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient();
@@ -21,7 +21,25 @@ export async function GET(req: NextRequest) {
 
   if (!video) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Si encore en cours, synchro avec Higgsfield
+  // pending → déclenche la génération (after() non fiable en dev)
+  if (video.status === "pending") {
+    console.log(`[status] video ${videoId} pending → triggering generation`);
+    try {
+      await triggerVideoGeneration(videoId);
+      console.log(`[status] video ${videoId} generation triggered OK`);
+    } catch (err) {
+      console.error(`[status] video ${videoId} trigger failed:`, err);
+    }
+    const { data: updated } = await supabase
+      .from("videos")
+      .select("status, video_url, thumbnail_url")
+      .eq("id", videoId)
+      .single();
+    console.log(`[status] video ${videoId} after trigger: status=${updated?.status}`);
+    return NextResponse.json(updated ?? video);
+  }
+
+  // generating → synchro avec Higgsfield
   if (video.status === "generating" && video.higgsfield_job_id) {
     await syncVideoStatus(videoId);
 

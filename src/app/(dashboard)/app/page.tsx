@@ -58,6 +58,18 @@ export default async function AppPage({
               className="px-4 py-3 rounded-xl bg-black/50 border border-white/10 text-white placeholder:text-white/20 focus:outline-none focus:border-[#FF2D55]/50 text-sm"
             />
           </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="product_image" className="text-sm text-white/60">
+              Image produit <span className="text-white/30">(PNG / JPG — optionnel si le scraper fonctionne)</span>
+            </label>
+            <input
+              id="product_image"
+              name="product_image"
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/webp"
+              className="px-4 py-3 rounded-xl bg-black/50 border border-white/10 text-white/60 text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-white/10 file:text-white/80 file:text-xs file:cursor-pointer cursor-pointer"
+            />
+          </div>
 
           <div className="flex items-center justify-between pt-2 border-t border-white/10">
             <p className="text-xs text-white/30">

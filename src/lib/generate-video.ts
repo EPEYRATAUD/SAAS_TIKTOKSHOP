@@ -1,48 +1,59 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { submitVideoGeneration } from "@/lib/higgsfield";
 import { extractProductInfo } from "@/lib/product-scraper";
 
 export async function triggerVideoGeneration(videoId: string): Promise<void> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: video } = await supabase
     .from("videos")
-    .select("product_url, user_id")
+    .select("product_url, product_image_url, user_id")
     .eq("id", videoId)
     .single();
 
   if (!video) throw new Error(`Video ${videoId} not found`);
 
-  // 1. Extraction infos produit (échec = pas de remboursement, URL utilisateur invalide)
-  let product: Awaited<ReturnType<typeof extractProductInfo>>;
-  try {
-    product = await extractProductInfo(video.product_url);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    await supabase.from("videos").update({
-      status: "failed",
-      error_message: errorMessage,
-    }).eq("id", videoId);
-    throw err;
-  }
+  let imageUrl: string;
+  let productTitle: string | null = null;
 
-  if (!product.imageUrl) {
-    await supabase.from("videos").update({
-      status: "failed",
-      product_title: product.title,
-      error_message: "Impossible d'extraire l'image produit depuis l'URL fournie.",
-    }).eq("id", videoId);
-    throw new Error("Impossible d'extraire l'image produit depuis l'URL fournie.");
+  if (video.product_image_url) {
+    // Image déjà fournie (bypass scraper)
+    imageUrl = video.product_image_url;
+  } else {
+    // 1. Extraction infos produit
+    let product: Awaited<ReturnType<typeof extractProductInfo>>;
+    try {
+      product = await extractProductInfo(video.product_url);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      await supabase.from("videos").update({
+        status: "failed",
+        error_message: errorMessage,
+      }).eq("id", videoId);
+      throw err;
+    }
+
+    if (!product.imageUrl) {
+      await supabase.from("videos").update({
+        status: "failed",
+        product_title: product.title,
+        error_message: "Impossible d'extraire l'image produit depuis l'URL fournie.",
+      }).eq("id", videoId);
+      throw new Error("Impossible d'extraire l'image produit depuis l'URL fournie.");
+    }
+
+    imageUrl = product.imageUrl;
+    productTitle = product.title;
   }
 
   await supabase.from("videos").update({
-    product_title: product.title,
-    product_image_url: product.imageUrl,
+    product_title: productTitle,
+    product_image_url: imageUrl,
     status: "generating",
   }).eq("id", videoId);
 
   // 2. Prompt UGC
-  const productName = product.title ?? "ce produit";
+  const productName = productTitle ?? "ce produit";
   const prompt = [
     `UGC TikTok video showcase for ${productName}.`,
     "Creator picks up the product, inspects it with genuine curiosity,",
@@ -54,10 +65,11 @@ export async function triggerVideoGeneration(videoId: string): Promise<void> {
   // 3. Submit Higgsfield — remboursement crédit si échec
   try {
     const result = await submitVideoGeneration({
-      imageUrl: product.imageUrl,
+      imageUrl,
       prompt,
-      duration: 5,
     });
+
+    console.log("[higgsfield] submit result:", JSON.stringify(result));
 
     await supabase.from("videos").update({
       higgsfield_job_id: result.request_id,
@@ -88,7 +100,7 @@ export async function triggerVideoGeneration(videoId: string): Promise<void> {
 
 export async function syncVideoStatus(videoId: string): Promise<void> {
   const { getGenerationStatus } = await import("@/lib/higgsfield");
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: video } = await supabase
     .from("videos")
@@ -100,11 +112,11 @@ export async function syncVideoStatus(videoId: string): Promise<void> {
 
   const statusResult = await getGenerationStatus(video.higgsfield_job_id);
 
-  if (statusResult.status === "completed" && statusResult.video_url) {
+  if (statusResult.status === "completed" && statusResult.video?.url) {
     await supabase.from("videos").update({
       status: "ready",
-      video_url: statusResult.video_url,
-      thumbnail_url: statusResult.image_url ?? null,
+      video_url: statusResult.video.url,
+      thumbnail_url: statusResult.images?.[0]?.url ?? null,
     }).eq("id", videoId);
   } else if (statusResult.status === "failed" || statusResult.status === "nsfw") {
     await supabase.from("videos").update({

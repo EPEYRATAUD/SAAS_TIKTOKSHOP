@@ -8,38 +8,41 @@ function authHeader(): string {
 }
 
 export interface SubmitResult {
-  request_id: string;
+  request_id: string; // mappé depuis response.id
+  job_id: string;     // mappé depuis response.jobs[0].id
   status: string;
-  status_url: string;
-  cancel_url: string;
 }
 
 export interface StatusResult {
   request_id: string;
   status: "queued" | "in_progress" | "completed" | "failed" | "nsfw";
-  video_url?: string;
-  image_url?: string;
+  video?: { url: string };
+  images?: { url: string }[];
   error?: string;
 }
 
 export async function submitVideoGeneration({
   imageUrl,
   prompt,
-  duration = 5,
 }: {
   imageUrl: string;
   prompt: string;
-  duration?: number;
 }): Promise<SubmitResult> {
-  const model = process.env.HIGGSFIELD_MODEL ?? "higgsfield-ai/dop/standard";
+  const model = process.env.HIGGSFIELD_MODEL ?? "dop-turbo";
 
-  const res = await fetch(`${BASE_URL}/${model}`, {
+  const res = await fetch(`${BASE_URL}/v1/image2video/dop`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: authHeader(),
     },
-    body: JSON.stringify({ image_url: imageUrl, prompt, duration }),
+    body: JSON.stringify({
+      params: {
+        model,
+        prompt,
+        input_images: [{ type: "image_url", image_url: imageUrl }],
+      },
+    }),
   });
 
   if (!res.ok) {
@@ -47,7 +50,13 @@ export async function submitVideoGeneration({
     throw new Error(`Higgsfield submit failed (${res.status}): ${body}`);
   }
 
-  return res.json();
+  const json = await res.json();
+  console.log("[higgsfield] raw submit response:", JSON.stringify(json));
+  return {
+    request_id: json.id,
+    job_id: json.jobs?.[0]?.id ?? "",
+    status: json.jobs?.[0]?.status ?? "queued",
+  };
 }
 
 export async function getGenerationStatus(requestId: string): Promise<StatusResult> {
@@ -60,7 +69,9 @@ export async function getGenerationStatus(requestId: string): Promise<StatusResu
     throw new Error(`Higgsfield status failed (${res.status})`);
   }
 
-  return res.json();
+  const json = await res.json();
+  console.log("[higgsfield] raw status response:", JSON.stringify(json));
+  return json;
 }
 
 export async function cancelGeneration(requestId: string): Promise<void> {
